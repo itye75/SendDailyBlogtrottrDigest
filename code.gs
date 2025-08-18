@@ -81,15 +81,6 @@ function sendDailyBlogtrottrDigest() {
       digest: '',
       title: ''
     });
-
-    Logger.log(
-      'Adding post to digest:\n' +
-      '  date: %s\n' +
-      '  subject: %s\n' +
-      '  url: %s\n' +
-      '  source: %s',
-      date, subject, filtered, source
-    );
   }
   th.addLabel(processed);
 }
@@ -102,8 +93,29 @@ function sendDailyBlogtrottrDigest() {
   var subject = 'Blogtrottr Digest · ' + today;
   var html = renderHtmlTable_(items);
   var text = renderTextTable_(items);
+
+logItems(items);
+
   GmailApp.sendEmail(RECIPIENT, subject, text, { htmlBody: html });
 }
+
+function logItems(items)
+{
+  for (var i = 0; i < items.length; i++) {
+    Logger.log(
+      'Adding post to digest:\n' +
+      '  date: %s\n' +
+      '  subject: %s\n' +
+      '  url: %s\n' +
+      '  source: %s\n' + 
+      '  digest: %s\n' +
+      '  title: %s',
+      items[i].emailDate, items[i].subject, items[i].url, items[i].source, items[i].digest, items[i].title
+    );
+  }
+
+}
+
 
 // --- Page fetch and AI summarization ---
 // --- Page fetch and AI summarization ---
@@ -317,7 +329,7 @@ function callGeminiTitle_(apiKey, pageText) {
 // --- Gemini client ---
 
 function getGeminiKey_() {
-  var key = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
+  var key = null; // PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
   return key ? key.trim() : '';
 }
 
