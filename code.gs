@@ -372,7 +372,7 @@ function renderHtmlTable_(items) {
   var rows = items.map(function(it) {
     var d = Utilities.formatDate(it.emailDate, tz, 'yyyy-MM-dd HH:mm');
     var safeSource = escapeHtml_(it.source);
-    var safeTitle = escapeHtml_(it.title);
+    var safeTitle = escapeHtml_(it.subject);
 
     // Create a new URL block to handle the array of links
     var urlsBlock = '';
