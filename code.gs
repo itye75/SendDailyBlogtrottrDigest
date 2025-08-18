@@ -66,20 +66,17 @@ function sendDailyBlogtrottrDigest() {
       continue;
     }
 
-    // Join all the filtered links into a single string
-    var combinedUrl = filtered.join(', ');
-
     // Use the subject as the key for 'seen' to ensure each email message is processed once
     if (seen[m.getId()]) continue;
     seen[m.getId()] = true;
 
     var date = m.getDate()
-    var source = tryExtractSourceFromEmail_(subject, html, combinedUrl.split(', ')[0])
+    var source = tryExtractSourceFromEmail_(subject, html, filtered)
 
     items.push({
       emailDate: date,
       subject: subject,
-      url: combinedUrl, // This will now contain all the links from the email
+      url: filtered,
       source: source, // Use the first link to determine the source
       digest: '',
       title: ''
@@ -91,7 +88,7 @@ function sendDailyBlogtrottrDigest() {
       '  subject: %s\n' +
       '  url: %s\n' +
       '  source: %s',
-      date, subject, combinedUrl, source
+      date, subject, filtered, source
     );
   }
   th.addLabel(processed);
@@ -252,13 +249,70 @@ function extractMainReadableText_(html, limit) {
 }
 
 function extractTitleFromHtml_(html) {
-  var m = /<title[^>]*>(.*?)<\/title>/i.exec(html || '');
-  if (m && m[1]) {
-    return safeTrim_(m[1]);
-  }
-  return '';
+  try {
+    var apiKey = getGeminiKey_();
+    if (!apiKey || !html) return '';
+
+    // Use a modest slice to keep the prompt efficient
+    var textForAi = extractMainReadableText_(html, 4000);
+    if (!textForAi) return '';
+
+    var aiTitle = callGeminiTitle_(apiKey, textForAi);
+    return safeTrim_(aiTitle || '');
+  } catch (e) {
+    Logger.log('extractTitleFromHtml_ error: %s', e.message);
+    return '';
+  }
 }
 
+function callGeminiTitle_(apiKey, pageText) {
+  try {
+    var prompt =
+      'From the page text below, return the best concise page title. ' +
+      'Return only the title text with no quotes or extra words. ' +
+      'Keep it under 120 characters. Prefer the main headline. ' +
+      'Ignore navigation, banners, cookie notices, and boilerplate. ' +
+      'Text follows:\n\n' + pageText;
+
+    var payload = {
+      contents: [{ role: 'user', parts: [{ text: prompt }]}]
+    };
+
+    var resp = UrlFetchApp.fetch(
+      'https://generativelanguage.googleapis.com/v1beta/models/' +
+        MODEL_NAME +
+        ':generateContent?key=' +
+        encodeURIComponent(apiKey),
+      {
+        method: 'post',
+        contentType: 'application/json',
+        payload: JSON.stringify(payload),
+        muteHttpExceptions: true
+      }
+    );
+
+    if (resp.getResponseCode() >= 200 && resp.getResponseCode() < 300) {
+      var data = JSON.parse(resp.getContentText());
+      var out =
+        (data &&
+         data.candidates &&
+         data.candidates[0] &&
+         data.candidates[0].content &&
+         data.candidates[0].content.parts &&
+         data.candidates[0].content.parts
+           .map(function(p) { return p.text; })
+           .filter(Boolean)
+           .join(' ')) || '';
+      return safeTrim_(out);
+    }
+
+    Logger.log('Gemini title call failed: %s %s', resp.getResponseCode(), resp.getContentText());
+    return '';
+  } catch (e) {
+    Logger.log('Gemini title call error: %s', e.message);
+    return '';
+  }
+}
 
 // --- Gemini client ---
 
@@ -302,42 +356,82 @@ function callGeminiSummarize_(apiKey, url, source, text) {
 // --- Rendering ---
 
 function renderHtmlTable_(items) {
-  var tz = Session.getScriptTimeZone();
-  var rows = items.map(function(it) {
-    var d = Utilities.formatDate(it.emailDate, tz, 'yyyy-MM-dd HH:mm');
-    var safeSource = escapeHtml_(it.source);
-    var safeTitle = escapeHtml_(it.title);
-    var safeUrl = escapeHtml_(it.url);
+  var tz = Session.getScriptTimeZone();
+  var rows = items.map(function(it) {
+    var d = Utilities.formatDate(it.emailDate, tz, 'yyyy-MM-dd HH:mm');
+    var safeSource = escapeHtml_(it.source);
+    var safeTitle = escapeHtml_(it.title);
 
-    // Create the bulleted list HTML from the digest text
-    var bulletPoints = it.digest.split('\n')
-      .filter(function(line) { return line.trim().length > 0; })
-      .map(function(line) { return '<li>' + escapeHtml_(line.trim().replace(/^[\*\-•] /, '')) + '</li>'; })
-      .join('\n');
-    var digestHtml = '<ul>' + bulletPoints + '</ul>';
+    // Create a new URL block to handle the array of links
+    var urlsBlock = '';
+    if (Array.isArray(it.url)) {
+      urlsBlock = '<ul>' + it.url.map(function(url) {
+        var safeUrl = escapeHtml_(url);
+        return '<li><a href="' + safeUrl + '">' + safeUrl + '</a></li>';
+      }).join('\n') + '</ul>';
+    } else {
+      // Fallback for non-array URLs
+      var safeUrl = escapeHtml_(it.url);
+      urlsBlock = '<a href="' + safeUrl + '">' + safeUrl + '</a>';
+    }
 
-    // The new row with the added title column
-    return '<tr><td style="white-space:nowrap; vertical-align:top; padding:6px 8px">' + d + '</td><td style="vertical-align:top; padding:6px 8px">' + safeSource + '</td><td style="vertical-align:top; padding:6px 8px">' + safeTitle + '</td><td style="vertical-align:top; padding:6px 8px"><a href="' + safeUrl + '">' + safeUrl + '</a></td><td style="vertical-align:top; padding:6px 8px">' + digestHtml + '</td></tr>';
-  }).join('\n');
+    // Create the bulleted list HTML from the digest text
+    var bulletPoints = it.digest.split('\n')
+      .filter(function(line) { return line.trim().length > 0; })
+      .map(function(line) { return '<li>' + escapeHtml_(line.trim().replace(/^[\*\-•] /, '')) + '</li>'; })
+      .join('\n');
+    var digestHtml = '<ul>' + bulletPoints + '</ul>';
 
-  // The new header with the added title column
-  return '<div style="font:14px system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif"><h2 style="margin:0 0 12px 0">Blogtrottr Digest</h2><table style="border-collapse:collapse; width:100%"><thead><tr><th style="text-align:left; border-bottom:1px solid #ddd; padding:8px">Email date</th><th style="text-align:left; border-bottom:1px solid #ddd; padding:8px">Source name</th><th style="text-align:left; border-bottom:1px solid #ddd; padding:8px">Post title</th><th style="text-align:left; border-bottom:1px solid #ddd; padding:8px">Link to post</th><th style="text-align:left; border-bottom:1px solid #ddd; padding:8px">Post digest</th></tr></thead><tbody>' + rows + '</tbody></table><p style="color:#666; margin-top:12px">Summaries are generated from the fetched page content only.</p></div>';
+    // The new row with the added title column
+    return '<tr><td style="white-space:nowrap; vertical-align:top; padding:6px 8px">' + d + '</td><td style="vertical-align:top; padding:6px 8px">' + safeSource + '</td><td style="vertical-align:top; padding:6px 8px">' + safeTitle + '</td><td style="vertical-align:top; padding:6px 8px">' + urlsBlock + '</td><td style="vertical-align:top; padding:6px 8px">' + digestHtml + '</td></tr>';
+  }).join('\n');
+
+  // The new header with the added title column
+  return '<div style="font:14px system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif"><h2 style="margin:0 0 12px 0">Blogtrottr Digest</h2><table style="border-collapse:collapse; width:100%"><thead><tr><th style="text-align:left; border-bottom:1px solid #ddd; padding:8px">Email date</th><th style="text-align:left; border-bottom:1px solid #ddd; padding:8px">Source name</th><th style="text-align:left; border-bottom:1px solid #ddd; padding:8px">Post title</th><th style="text-align:left; border-bottom:1px solid #ddd; padding:8px">Link to post</th><th style="text-align:left; border-bottom:1px solid #ddd; padding:8px">Post digest</th></tr></thead><tbody>' + rows + '</tbody></table><p style="color:#666; margin-top:12px">Summaries are generated from the fetched page content only.</p></div>';
 }
 
 function renderTextTable_(items) {
   var tz = Session.getScriptTimeZone();
+
   var lines = items.map(function(it) {
     var d = Utilities.formatDate(it.emailDate, tz, 'yyyy-MM-dd HH:mm');
 
-    // Remove the bullets from the digest text and keep it on a single line
-    var digestText = it.digest.replace(/[\*\-•]\s*/g, '').replace(/\n/g, ' ');
+    // Flatten digest bullets to a single line
+    var digestText = String(it.digest || '')
+      .replace(/[\*\u2022\-]\s*/g, '')
+      .replace(/\n/g, ' ')
+      .trim();
 
-    // Concatenate all post elements into a single string with a delimiter
-    return 'Email date: ' + d + ' | Source name: ' + it.source + ' | Post title: ' + it.title + ' | Link to post: ' + it.url + ' | Post digest: ' + digestText;
+    // it.url may contain multiple links joined with commas
+    var urls = String(it.url || '')
+      .split(/\s*,\s*/)
+      .filter(Boolean);
+
+    var urlsBlock = joinAsLines(urls);
+
+    return 'Email date: ' + d +
+           '\nSource name: ' + it.source +
+           '\nPost title: ' + it.title +
+           '\nLink to post(s):' + urlsBlock +
+           '\nPost digest: ' + digestText;
   });
-  
-  // Join all single-line post strings with a newline character
-  return 'Blogtrottr Digest\n\n' + lines.join('\n') + '\n';
+
+  // Blank line between emails
+  return 'Blogtrottr Digest\n\n' + lines.join('\n\n') + '\n';
+}
+
+function joinAsLines(urls, opts) {
+  urls = Array.isArray(urls) ? urls : [];
+  opts = opts || {};
+  var indent = opts.indent || '';
+  var eol = opts.eol || '\n';
+  var trim = opts.trim !== false; // default true
+
+  return urls.map(function(s) {
+    s = s == null ? '' : String(s);
+    if (trim) s = s.trim();
+    return indent + s;
+  }).join(eol);
 }
 
 // --- Shared helpers ---
