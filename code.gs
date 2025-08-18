@@ -73,16 +73,26 @@ function sendDailyBlogtrottrDigest() {
     if (seen[m.getId()]) continue;
     seen[m.getId()] = true;
 
+    var date = m.getDate()
+    var source = tryExtractSourceFromEmail_(subject, html, combinedUrl.split(', ')[0])
+
     items.push({
-      emailDate: m.getDate(),
+      emailDate: date,
       subject: subject,
       url: combinedUrl, // This will now contain all the links from the email
-      source: tryExtractSourceFromEmail_(subject, html, combinedUrl.split(', ')[0]), // Use the first link to determine the source
+      source: source, // Use the first link to determine the source
       digest: '',
       title: ''
     });
 
-    Logger.log('Adding post to digest: %s (from: %s)', combinedUrl, subject);
+    Logger.log(
+      'Adding post to digest:\n' +
+      '  date: %s\n' +
+      '  subject: %s\n' +
+      '  url: %s\n' +
+      '  source: %s',
+      date, subject, combinedUrl, source
+    );
   }
   th.addLabel(processed);
 }
@@ -392,14 +402,32 @@ function isLikelyArticleUrl_(u) {
 }
 
 function tryExtractSourceFromEmail_(subject, html, url) {
-  // Extract the source name from the hostname of the article URL.
-  try {
-    var host = getHostnameFromUrl_(url);
-    return host.replace(/^www\./, '');
-  } catch (e) {
-    return 'unknown';
-  }
+  try {
+    if (subject) {
+      // Remove square brackets if Blogtrottr includes them
+      var cleaned = subject.replace(/^\[.*?\]\s*/, '');
+
+      // Split on common separators
+      var parts = cleaned.split(/[\|\-–—:»]/);
+
+      // Take the first part as the likely source name
+      if (parts.length > 1) {
+        return safeTrim_(parts[0]);
+      }
+
+      // If no separator, just return the subject itself
+      return safeTrim_(cleaned);
+    }
+
+    // Fallback to hostname
+    var host = getHostnameFromUrl_(url);
+    return host.replace(/^www\./, '');
+  } catch (e) {
+    return 'unknown';
+  }
 }
+
+
 
 function getHostnameFromUrl_(u) {
     if (typeof u !== 'string') return '';
