@@ -11,7 +11,7 @@ var MAX_LINKS_PER_MSG = 10;
 var RECIPIENT = Session.getActiveUser().getEmail();
 
 // New configuration variable for the number of days to process
-var DAYS_TO_PROCESS = 7;
+var DAYS_TO_PROCESS = 1;
 
 // Fetch and summarization controls
 var HTTP_TIMEOUT_MS = 15000;
